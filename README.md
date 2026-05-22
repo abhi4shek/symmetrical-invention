@@ -118,6 +118,7 @@ Use:
 Root Directory: .
 Build Command: pip install -r requirements.txt
 Start Command: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+Health Check Path: /health
 ```
 
 Add Render environment variables:
@@ -149,7 +150,7 @@ Use:
 Root Directory: frontend
 Build Command: npm run build
 Output Directory: dist
-Install Command: npm install
+Install Command: npm ci
 ```
 
 Add Vercel environment variable:
@@ -157,6 +158,8 @@ Add Vercel environment variable:
 ```env
 VITE_API_BASE_URL=https://your-render-backend.onrender.com
 ```
+
+The included `frontend/vercel.json` keeps React Router routes working after refresh.
 
 After Vercel gives you the final frontend URL, update Render:
 

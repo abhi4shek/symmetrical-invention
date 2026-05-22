@@ -4,6 +4,7 @@ import Auth from './components/Auth'
 import Dashboard from './components/Dashboard'
 import { AuthContext } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
+import { apiUrl } from './config'
 import type { User } from './types'
 
 function App() {
@@ -15,8 +16,7 @@ function App() {
     const token = localStorage.getItem('token')
     if (token) {
       // Verify token with backend
-      const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
-      fetch(`${apiBaseUrl}/auth/me`, {
+      fetch(apiUrl('/auth/me'), {
         headers: {
           'Authorization': `Bearer ${token}`
         }

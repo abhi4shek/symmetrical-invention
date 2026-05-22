@@ -1,9 +1,8 @@
 import { useContext, useState, type FormEvent } from 'react'
 import { AuthContext } from '../contexts/AuthContext'
 import { useTheme } from '../contexts/ThemeContext'
+import { apiUrl } from '../config'
 import { Moon, Sun, FileText, AlertCircle, CheckCircle, Loader } from 'lucide-react'
-
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true)
@@ -32,7 +31,7 @@ const Auth = () => {
     setSuccess('')
 
     try {
-      const endpoint = isLogin ? `${API_BASE_URL}/auth/login` : `${API_BASE_URL}/auth/register`
+      const endpoint = isLogin ? apiUrl('/auth/login') : apiUrl('/auth/register')
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -51,7 +50,7 @@ const Auth = () => {
         // Login successful
         localStorage.setItem('token', data.access_token)
         // Get user info
-        const userResponse = await fetch(`${API_BASE_URL}/auth/me`, {
+        const userResponse = await fetch(apiUrl('/auth/me'), {
           headers: {
             'Authorization': `Bearer ${data.access_token}`
           }

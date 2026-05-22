@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: doc-chat-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DEFAULT_GROQ_MODEL
+        value: llama-3.1-8b-instant
+      - key: QDRANT_COLLECTION
+        value: doc_chat_chunks
+      - key: SUPABASE_BUCKET
+        value: documents

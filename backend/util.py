@@ -8,16 +8,18 @@ from io import BytesIO
 from typing import Any, Dict, List, Optional
 
 import requests
+from dotenv import load_dotenv
 from langchain.docstore.document import Document as LangchainDocument
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.embeddings import Embeddings
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from langchain_groq import ChatGroq
 from pypdf import PdfReader
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qdrant_models
+
+load_dotenv()
 
 VECTOR_SIZE = 384
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "doc_chat_chunks")
@@ -48,7 +50,11 @@ class LocalHashEmbeddings(Embeddings):
         return self._embed(text)
 
 
-class CheckedHuggingFaceEmbeddings(HuggingFaceInferenceAPIEmbeddings):
+class CheckedHuggingFaceEmbeddings(Embeddings):
+    def __init__(self, api_key: str, model_name: str):
+        self.api_key = api_key
+        self.model_name = model_name
+
     @property
     def _api_url(self) -> str:
         return (
@@ -59,7 +65,7 @@ class CheckedHuggingFaceEmbeddings(HuggingFaceInferenceAPIEmbeddings):
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         response = requests.post(
             self._api_url,
-            headers=self._headers,
+            headers={"Authorization": f"Bearer {self.api_key}"},
             json={
                 "inputs": texts,
                 "options": {"wait_for_model": True, "use_cache": True},
@@ -99,6 +105,9 @@ class CheckedHuggingFaceEmbeddings(HuggingFaceInferenceAPIEmbeddings):
             raise ValueError(f"Hugging Face embedding request failed: {data['error']}")
 
         return data
+
+    def embed_query(self, text: str) -> List[float]:
+        return self.embed_documents([text])[0]
 
 
 class FallbackEmbeddings(Embeddings):

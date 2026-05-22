@@ -65,7 +65,7 @@ const HistoryPanel = ({
                     <div className="flex items-center space-x-1 text-xs text-gray-500 dark:text-gray-400">
                       <Clock className="w-3 h-3" />
                       <span>{formatDate(session.created_at)}</span>
-                      <span>•</span>
+                      <span>&bull;</span>
                       <span>{session.messages.length} message{session.messages.length !== 1 ? 's' : ''}</span>
                     </div>
                   </div>
