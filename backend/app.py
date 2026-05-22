@@ -94,6 +94,7 @@ async def upload_documents(
     db.refresh(document)
 
     try:
+        util.upload_pdf_to_storage(current_user.id, document.id, document.filename, file_bytes)
         util.add_document_to_vectorstore(current_user.id, document.id, document.filename, file_bytes)
     except Exception as exc:
         db.delete(document)
@@ -152,6 +153,7 @@ def delete_document(
 
     db.delete(document)
     db.commit()
+    util.delete_document_vectors(current_user.id, document_id)
     return {"detail": "Document deleted"}
 
 

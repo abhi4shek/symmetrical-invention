@@ -2,19 +2,25 @@ import hashlib
 import math
 import os
 import re
+import uuid
 import warnings
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 
 import requests
+from langchain.docstore.document import Document as LangchainDocument
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.embeddings import Embeddings
 from langchain_core.prompts import ChatPromptTemplate
-from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
-from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
+from qdrant_client import QdrantClient
+from qdrant_client.http import models as qdrant_models
+
+VECTOR_SIZE = 384
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "doc_chat_chunks")
 
 
 class LocalHashEmbeddings(Embeddings):
@@ -145,10 +151,61 @@ def get_embedding_function() -> Embeddings:
     return FallbackEmbeddings(hugging_face_embeddings, LocalHashEmbeddings())
 
 
-def vectorstore_dir(user_id: int) -> str:
-    store_dir = os.path.join("data", "vectorstores", f"user_{user_id}")
-    os.makedirs(store_dir, exist_ok=True)
-    return store_dir
+def get_qdrant_client() -> QdrantClient:
+    qdrant_url = get_env_variable("QDRANT_URL")
+    qdrant_api_key = get_env_variable("QDRANT_API_KEY")
+    if not qdrant_url:
+        raise ValueError("QDRANT_URL is required for online vector storage.")
+    return QdrantClient(url=qdrant_url, api_key=qdrant_api_key or None)
+
+
+def ensure_qdrant_collection(client: QdrantClient) -> None:
+    try:
+        client.get_collection(QDRANT_COLLECTION)
+    except Exception:
+        client.create_collection(
+            collection_name=QDRANT_COLLECTION,
+            vectors_config=qdrant_models.VectorParams(
+                size=VECTOR_SIZE,
+                distance=qdrant_models.Distance.COSINE,
+            ),
+        )
+
+
+def storage_object_path(user_id: int, document_id: int, filename: str) -> str:
+    clean_filename = re.sub(r"[^A-Za-z0-9_.-]+", "_", filename).strip("._")
+    return f"user_{user_id}/document_{document_id}/{clean_filename or 'document.pdf'}"
+
+
+def upload_pdf_to_storage(
+    user_id: int,
+    document_id: int,
+    filename: str,
+    file_bytes: bytes,
+) -> Optional[str]:
+    supabase_url = get_env_variable("SUPABASE_URL")
+    service_key = get_env_variable("SUPABASE_SERVICE_ROLE_KEY")
+    bucket = get_env_variable("SUPABASE_BUCKET", "documents")
+    if not supabase_url or not service_key:
+        warnings.warn("Supabase Storage is not configured. Skipping PDF backup upload.")
+        return None
+
+    object_path = storage_object_path(user_id, document_id, filename)
+    upload_url = f"{supabase_url.rstrip('/')}/storage/v1/object/{bucket}/{object_path}"
+    response = requests.post(
+        upload_url,
+        headers={
+            "Authorization": f"Bearer {service_key}",
+            "apikey": service_key,
+            "Content-Type": "application/pdf",
+            "x-upsert": "true",
+        },
+        data=file_bytes,
+        timeout=120,
+    )
+    if response.status_code >= 400:
+        raise ValueError(f"Supabase Storage upload failed: {response.text[:300]}")
+    return object_path
 
 
 def add_document_to_vectorstore(
@@ -166,35 +223,68 @@ def add_document_to_vectorstore(
         raise ValueError("No text chunks could be created from the uploaded PDF.")
 
     embeddings = get_embedding_function()
-    metadatas = [{"document_id": document_id, "filename": filename} for _ in text_chunks]
-    new_store = FAISS.from_texts(texts=text_chunks, embedding=embeddings, metadatas=metadatas)
-    path = vectorstore_dir(user_id)
-    index_file = os.path.join(path, "index.faiss")
+    vectors = embeddings.embed_documents(text_chunks)
+    client = get_qdrant_client()
+    ensure_qdrant_collection(client)
 
-    if os.path.exists(index_file):
-        vector_store = FAISS.load_local(
-            path,
-            embeddings,
-            allow_dangerous_deserialization=True,
+    points = []
+    for index, (chunk, vector) in enumerate(zip(text_chunks, vectors)):
+        points.append(
+            qdrant_models.PointStruct(
+                id=str(uuid.uuid4()),
+                vector=vector,
+                payload={
+                    "user_id": user_id,
+                    "document_id": document_id,
+                    "filename": filename,
+                    "chunk_index": index,
+                    "text": chunk,
+                },
+            )
         )
-        vector_store.merge_from(new_store)
-    else:
-        vector_store = new_store
 
-    vector_store.save_local(path)
-    return path
+    client.upsert(collection_name=QDRANT_COLLECTION, points=points)
+    return QDRANT_COLLECTION
 
 
-def load_vectorstore(user_id: int) -> FAISS:
-    path = vectorstore_dir(user_id)
-    if not os.path.exists(os.path.join(path, "index.faiss")):
-        raise FileNotFoundError("Vector store does not exist for this user.")
-    embeddings = get_embedding_function()
-    return FAISS.load_local(
-        path,
-        embeddings,
-        allow_dangerous_deserialization=True,
+def document_filter(user_id: int, selected_document_ids: List[int]) -> qdrant_models.Filter:
+    return qdrant_models.Filter(
+        must=[
+            qdrant_models.FieldCondition(
+                key="user_id",
+                match=qdrant_models.MatchValue(value=user_id),
+            ),
+            qdrant_models.FieldCondition(
+                key="document_id",
+                match=qdrant_models.MatchAny(any=selected_document_ids),
+            ),
+        ]
     )
+
+
+def delete_document_vectors(user_id: int, document_id: int) -> None:
+    try:
+        client = get_qdrant_client()
+        ensure_qdrant_collection(client)
+        client.delete(
+            collection_name=QDRANT_COLLECTION,
+            points_selector=qdrant_models.FilterSelector(
+                filter=qdrant_models.Filter(
+                    must=[
+                        qdrant_models.FieldCondition(
+                            key="user_id",
+                            match=qdrant_models.MatchValue(value=user_id),
+                        ),
+                        qdrant_models.FieldCondition(
+                            key="document_id",
+                            match=qdrant_models.MatchValue(value=document_id),
+                        ),
+                    ]
+                )
+            ),
+        )
+    except Exception as exc:
+        warnings.warn(f"Could not delete vectors for document {document_id}: {exc}")
 
 
 def build_prompt() -> ChatPromptTemplate:
@@ -226,20 +316,35 @@ def query_user_vectorstore(
     model_name: Optional[str] = None,
     selected_document_ids: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
-    vector_store = load_vectorstore(user_id)
+    selected_ids = selected_document_ids or []
+    if not selected_ids:
+        raise ValueError("At least one document must be selected before querying.")
+
+    embeddings = get_embedding_function()
+    query_vector = embeddings.embed_query(question)
+    client = get_qdrant_client()
+    ensure_qdrant_collection(client)
     llm = build_llm(model_name)
     prompt = build_prompt()
     document_chain = create_stuff_documents_chain(llm, prompt)
-    selected_ids = set(selected_document_ids or [])
 
-    def metadata_filter(metadata: Dict[str, Any]) -> bool:
-        return not selected_ids or metadata.get("document_id") in selected_ids
-
-    documents = vector_store.similarity_search(
-        question,
-        k=5,
-        filter=metadata_filter,
+    hits = client.search(
+        collection_name=QDRANT_COLLECTION,
+        query_vector=query_vector,
+        query_filter=document_filter(user_id, selected_ids),
+        limit=5,
     )
+    documents = [
+        LangchainDocument(
+            page_content=str(hit.payload.get("text", "")),
+            metadata={
+                "filename": hit.payload.get("filename", ""),
+                "document_id": hit.payload.get("document_id"),
+            },
+        )
+        for hit in hits
+        if hit.payload and hit.payload.get("text")
+    ]
     if not documents:
         return {
             "answer": "No matching content was found in the selected documents.",

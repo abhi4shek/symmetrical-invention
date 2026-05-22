@@ -1,5 +1,9 @@
 import { ChatSession, DocumentMeta } from '../types'
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+
+const apiUrl = (path: string) => `${API_BASE_URL}${path}`
+
 const getAuthHeaders = () => {
   const token = localStorage.getItem('token')
   return token ? { Authorization: `Bearer ${token}` } : {}
@@ -14,7 +18,7 @@ const parseResponse = async (response: Response) => {
 }
 
 export async function getDocuments() {
-  const response = await fetch('/api/documents', {
+  const response = await fetch(apiUrl('/documents'), {
     headers: getAuthHeaders(),
   })
   return parseResponse(response) as Promise<{ documents: DocumentMeta[] }>
@@ -24,7 +28,7 @@ export async function uploadDocument(file: File) {
   const formData = new FormData()
   formData.append('file', file)
 
-  const response = await fetch('/api/upload', {
+  const response = await fetch(apiUrl('/upload'), {
     method: 'POST',
     headers: getAuthHeaders(),
     body: formData,
@@ -33,7 +37,7 @@ export async function uploadDocument(file: File) {
 }
 
 export async function updateDocumentSelection(documentId: number, selected: boolean) {
-  const response = await fetch(`/api/documents/${documentId}`, {
+  const response = await fetch(apiUrl(`/documents/${documentId}`), {
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',
@@ -45,7 +49,7 @@ export async function updateDocumentSelection(documentId: number, selected: bool
 }
 
 export async function deleteDocument(documentId: number) {
-  const response = await fetch(`/api/documents/${documentId}`, {
+  const response = await fetch(apiUrl(`/documents/${documentId}`), {
     method: 'DELETE',
     headers: getAuthHeaders(),
   })
@@ -53,14 +57,14 @@ export async function deleteDocument(documentId: number) {
 }
 
 export async function getHistory() {
-  const response = await fetch('/api/history', {
+  const response = await fetch(apiUrl('/history'), {
     headers: getAuthHeaders(),
   })
   return parseResponse(response) as Promise<{ sessions: ChatSession[] }>
 }
 
 export async function deleteHistory(sessionId: number) {
-  const response = await fetch(`/api/history/${sessionId}`, {
+  const response = await fetch(apiUrl(`/history/${sessionId}`), {
     method: 'DELETE',
     headers: getAuthHeaders(),
   })
@@ -86,7 +90,7 @@ export async function sendMessage(
     body.selected_document_ids = selectedDocumentIds
   }
 
-  const response = await fetch('/api/chat', {
+  const response = await fetch(apiUrl('/chat'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

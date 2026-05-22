@@ -15,7 +15,8 @@ function App() {
     const token = localStorage.getItem('token')
     if (token) {
       // Verify token with backend
-      fetch('/api/auth/me', {
+      const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+      fetch(`${apiBaseUrl}/auth/me`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
