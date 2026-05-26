@@ -179,6 +179,25 @@ def ensure_qdrant_collection(client: QdrantClient) -> None:
                 distance=qdrant_models.Distance.COSINE,
             ),
         )
+    # Ensure payload indexes for filtering fields exist
+    try:
+        client.create_payload_index(
+            collection_name=QDRANT_COLLECTION,
+            field_name="user_id",
+            field_schema=qdrant_models.PayloadSchemaType.INTEGER,
+        )
+    except Exception:
+        pass
+
+    try:
+        client.create_payload_index(
+            collection_name=QDRANT_COLLECTION,
+            field_name="document_id",
+            field_schema=qdrant_models.PayloadSchemaType.INTEGER,
+        )
+    except Exception:
+        pass
+
 
 
 def storage_object_path(user_id: int, document_id: int, filename: str) -> str:
